@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OSRS Flips</title>
+<style>
+  :root {
+    --bg: #f7f6f3; --panel: #fff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e2dc;
+    --accent: #b8860b; --good: #1f7a3a; --bad: #b42318; --hi: #2563eb; --lo: #c2410c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141416; --panel: #1c1c1f; --text: #ececee; --muted: #9a9aa2; --line: #2c2c31;
+            --accent: #e0b04a; --good: #4ade80; --bad: #f87171; --hi: #60a5fa; --lo: #fb923c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { padding: 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; }
+  h1 { font-size: 18px; margin: 0; }
+  #status { color: var(--muted); font-size: 12px; }
+  form { display: flex; flex-wrap: wrap; gap: 10px; padding: 0 16px 12px; align-items: end; }
+  label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 3px; }
+  input, select, button { font: inherit; padding: 5px 8px; border: 1px solid var(--line);
+         border-radius: 6px; background: var(--panel); color: var(--text); }
+  input { width: 100px; }
+  button { cursor: pointer; background: var(--accent); color: #111; border: none; font-weight: 600; }
+  .wrap { overflow-x: auto; padding: 0 16px 24px; }
+  table { border-collapse: collapse; width: 100%; background: var(--panel);
+          border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 6px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted);
+       cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
+  th.sorted { color: var(--accent); }
+  td:first-child, th:first-child { text-align: left; }
+  td { font-variant-numeric: tabular-nums; }
+  tbody tr.item { cursor: pointer; }
+  tbody tr.item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  a { color: inherit; }
+  .good { color: var(--good); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+  .mem { font-size: 10px; color: var(--muted); margin-left: 4px; }
+  tr.detail td { text-align: left; background: var(--bg); }
+  .chart { width: 100%; height: 160px; }
+  .legend { font-size: 12px; color: var(--muted); }
+  .legend b.hi { color: var(--hi); } .legend b.lo { color: var(--lo); }
+  .empty { padding: 24px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>OSRS Flips</h1>
+  <span id="status">loading…</span>
+</header>
+
+<form id="filters">
+  <label>Budget <input name="budget" placeholder="e.g. 10m"></label>
+  <label>Min 1h volume <input name="min_volume" type="number" value="10" min="0"></label>
+  <label>Min ROI % <input name="min_roi" type="number" value="0" step="0.1"></label>
+  <label>Min margin <input name="min_margin" placeholder="e.g. 1k" value="1"></label>
+  <label>Max price age (min) <input name="max_age_min" type="number" value="30" min="1"></label>
+  <label>Items
+    <select name="members"><option value="all">All</option><option value="members">Members</option><option value="f2p">F2P</option></select>
+  </label>
+  <label>Stability lookback
+    <select name="history_hours"><option>1</option><option>3</option><option selected>6</option><option>12</option><option>24</option></select>
+  </label>
+  <button type="submit">Refresh</button>
+</form>
+
+<div class="wrap">
+  <table>
+    <thead><tr>
+      <th data-k="name">Item</th>
+      <th data-k="buy">Buy</th>
+      <th data-k="sell">Sell</th>
+      <th data-k="tax">Tax</th>
+      <th data-k="margin">Margin</th>
+      <th data-k="roi">ROI</th>
+      <th data-k="buy_limit">Limit</th>
+      <th data-k="vol_1h">1h vol</th>
+      <th data-k="qty">Qty</th>
+      <th data-k="profit">Profit / 4h</th>
+      <th data-k="stability" title="Share of recent price windows with a positive post-tax margin">Stable</th>
+      <th data-k="median_margin">Med. margin</th>
+      <th data-k="age_min">Age</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const fmt = (n) => n == null ? "–" : Math.round(n).toLocaleString();
+const short = (n) => {
+  if (n == null) return "–";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "b";
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "m";
+  if (a >= 1e4) return (n / 1e3).toFixed(1) + "k";
+  return fmt(n);
+};
+const parseGp = (s) => {
+  s = String(s || "").trim().toLowerCase().replace(/,/g, "");
+  if (!s) return null;
+  const m = s.match(/^([\d.]+)\s*([kmb]?)$/);
+  if (!m) return null;
+  return Math.round(parseFloat(m[1]) * ({ "": 1, k: 1e3, m: 1e6, b: 1e9 })[m[2]]);
+};
+const ago = (t) => {
+  if (!t) return "never";
+  const s = Math.round(Date.now() / 1000 - t);
+  return s < 90 ? `${s}s ago` : `${Math.round(s / 60)}m ago`;
+};
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const STORE = "flipping.filters";
+const open = new Set();
+let rows = [], sortKey = "profit", sortDir = -1;
+
+function loadFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE) || "{}");
+    for (const [k, v] of Object.entries(saved)) {
+      const el = $("#filters").elements[k];
+      if (el) el.value = v;
+    }
+    if (saved._sortKey) { sortKey = saved._sortKey; sortDir = saved._sortDir || -1; }
+  } catch {}
+}
+function saveFilters() {
+  try {
+    const f = Object.fromEntries(new FormData($("#filters")));
+    localStorage.setItem(STORE, JSON.stringify({ ...f, _sortKey: sortKey, _sortDir: sortDir }));
+  } catch {}
+}
+
+async function load() {
+  const f = Object.fromEntries(new FormData($("#filters")));
+  const q = new URLSearchParams({
+    min_volume: f.min_volume || 0, min_roi: f.min_roi || 0,
+    min_margin: parseGp(f.min_margin) ?? 1, max_age_min: f.max_age_min || 30,
+    members: f.members, history_hours: f.history_hours, limit: 300,
+  });
+  const budget = parseGp(f.budget);
+  if (budget) q.set("budget", budget);
+  saveFilters();
+  try {
+    const [flips, status] = await Promise.all([
+      fetch("api/flips?" + q).then((r) => r.json()),
+      fetch("api/status").then((r) => r.json()),
+    ]);
+    rows = Array.isArray(flips) ? flips : [];
+    renderStatus(status);
+    render();
+  } catch (e) {
+    $("#status").textContent = "error: " + e;
+  }
+}
+
+function renderStatus(s) {
+  const c = s.collector || {};
+  const hrs = s.db.first_ts ? ((s.db.last_ts - s.db.first_ts) / 3600).toFixed(1) : 0;
+  let txt = `prices ${ago(c.latest_fetched_at)} · last 5m window ${ago(c.last_5m_window)} · ${hrs}h of history · ${s.db.rows.toLocaleString()} rows`;
+  if (s.db.hourly_windows) txt += ` (${s.db.hourly_windows}h hourly)`;
+  if (c.backfill_remaining) txt += ` · backfilling ${c.backfill_remaining} windows (${c.backfill_step})`;
+  if (!s.collector) txt += " · collector disabled";
+  $("#status").textContent = txt;
+}
+
+function render() {
+  const sorted = [...rows].sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (typeof x === "string") return sortDir * x.localeCompare(y);
+    return sortDir * ((x ?? -Infinity) - (y ?? -Infinity));
+  });
+  document.querySelectorAll("th").forEach((th) => th.classList.toggle("sorted", th.dataset.k === sortKey));
+  if (!sorted.length) {
+    $("#rows").innerHTML = `<tr><td colspan="13" class="empty">No items match. Loosen the filters, or wait for the collector to gather an hour of volume data.</td></tr>`;
+    return;
+  }
+  $("#rows").innerHTML = sorted.map((r) => `
+    <tr class="item" data-id="${r.id}">
+      <td><a href="https://prices.runescape.wiki/osrs/item/${r.id}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.name)}</a>${r.members ? '<span class="mem">P2P</span>' : ""}</td>
+      <td>${fmt(r.buy)}</td>
+      <td>${fmt(r.sell)}</td>
+      <td class="muted">${fmt(r.tax)}</td>
+      <td class="good">${fmt(r.margin)}</td>
+      <td>${r.roi.toFixed(2)}%</td>
+      <td>${fmt(r.buy_limit)}</td>
+      <td>${fmt(r.vol_1h)}</td>
+      <td>${fmt(r.qty)}</td>
+      <td><b>${short(r.profit)}</b></td>
+      <td class="${r.stability == null ? "muted" : r.stability >= 0.7 ? "good" : r.stability < 0.4 ? "bad" : ""}" title="${r.windows} windows">${r.stability == null ? "–" : Math.round(r.stability * 100) + "%"}</td>
+      <td class="${(r.median_margin ?? 0) > 0 ? "" : "bad"}">${fmt(r.median_margin)}</td>
+      <td class="muted">${r.age_min}m</td>
+    </tr>`).join("");
+  document.querySelectorAll("tr.item").forEach((tr) => { if (open.has(tr.dataset.id)) showDetail(tr); });
+}
+
+function toggleDetail(tr) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("detail")) { next.remove(); open.delete(tr.dataset.id); return; }
+  open.add(tr.dataset.id);
+  showDetail(tr);
+}
+
+async function showDetail(tr) {
+  const d = document.createElement("tr");
+  d.className = "detail";
+  d.innerHTML = `<td colspan="13">loading 24h history…</td>`;
+  tr.after(d);
+  const hist = await fetch(`api/items/${tr.dataset.id}/history?hours=24`).then((r) => r.json());
+  d.firstElementChild.innerHTML = chart(hist);
+}
+
+function chart(h) {
+  const pts = h.filter((p) => p.avg_high != null || p.avg_low != null);
+  if (pts.length < 2) return `<span class="muted">Not enough history yet.</span>`;
+  const W = 1000, H = 160, P = 4;
+  const t0 = pts[0].ts, t1 = pts[pts.length - 1].ts;
+  const vals = pts.flatMap((p) => [p.avg_high, p.avg_low]).filter((v) => v != null);
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  const x = (t) => P + ((t - t0) / (t1 - t0 || 1)) * (W - 2 * P);
+  const y = (v) => H - P - ((v - lo) / span) * (H - 2 * P);
+  const line = (k) => pts.filter((p) => p[k] != null).map((p, i) => `${i ? "L" : "M"}${x(p.ts).toFixed(1)},${y(p[k]).toFixed(1)}`).join("");
+  return `<div class="legend"><b class="hi">avg instabuy</b> / <b class="lo">avg instasell</b> over 24h · range ${fmt(lo)} – ${fmt(hi)}</div>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <path d="${line("avg_high")}" fill="none" stroke="var(--hi)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+      <path d="${line("avg_low")}" fill="none" stroke="var(--lo)" stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+    </svg>`;
+}
+
+document.querySelectorAll("th").forEach((th) => th.addEventListener("click", () => {
+  const k = th.dataset.k;
+  sortDir = k === sortKey ? -sortDir : (k === "name" ? 1 : -1);
+  sortKey = k;
+  saveFilters();
+  render();
+}));
+$("#rows").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr.item");
+  if (tr) toggleDetail(tr);
+});
+$("#filters").addEventListener("submit", (e) => { e.preventDefault(); load(); });
+
+loadFilters();
+load();
+setInterval(load, 60_000);
+</script>
+</body>
+</html>
