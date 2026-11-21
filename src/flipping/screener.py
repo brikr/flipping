@@ -9,13 +9,19 @@ For each item:
   qty     = min(buy limit, what the budget affords, vol_1h)
             (one hour of real volume is a deliberately conservative proxy for
             how much of a 4h buy limit you can realistically fill)
-  profit  = margin * qty  -> estimated gp per 4h buy-limit window
+  profit  = margin * qty  -> estimated gp per 4h buy-limit window, if the
+            current margin holds (optimistic)
+  real_profit = max(median margin, 0) * qty -> same, using the typical recent
+            margin instead of the current one (the default sort)
 
 Stability comes from stored history: of the windows (5m, or 1h where the
 history was backfilled hourly) in the lookback where
 the item traded on both sides, how many had a positive post-tax margin, and
 what the median margin was. A big margin that only appeared in the last few
 minutes scores low.
+
+Favorites skip every filter and always come first, so starred items stay
+visible even when they don't currently look profitable.
 """
 
 import statistics
@@ -35,8 +41,9 @@ class ScreenParams:
     max_age_min: int = 30  # ignore prices older than this
     members: bool | None = None  # None = both, False = F2P only
     history_hours: int = 6
-    sort: str = "profit"  # profit | margin | roi | volume | stability
+    sort: str = "real_profit"  # real_profit | profit | margin | roi | volume | stability
     limit: int = 100
+    favorites: frozenset[int] = frozenset()  # item ids; the browser keeps the list
 
 
 @dataclass
@@ -52,11 +59,13 @@ class Flip:
     buy_limit: int | None
     vol_1h: int
     qty: int
-    profit: int
+    profit: int  # margin * qty: optimistic, assumes the current margin holds
+    real_profit: int | None  # max(median_margin, 0) * qty; None without history
     stability: float | None  # 0-1, share of recent windows with a positive margin
     median_margin: int | None
     windows: int  # how many history windows the stability is based on
     age_min: float  # age of the older of the two latest prices
+    favorite: bool
 
 
 def screen(
@@ -66,6 +75,7 @@ def screen(
     history: dict[int, list[tuple[int, int]]],
     p: ScreenParams,
     now: float,
+    favorites: set[int] = frozenset(),
 ) -> list[Flip]:
     out: list[Flip] = []
     for item_id, lp in latest.items():
@@ -73,20 +83,23 @@ def screen(
         buy, sell = lp.get("low"), lp.get("high")
         if not it or not buy or not sell:
             continue
-        if p.members is not None and bool(it["members"]) != p.members:
-            continue
+        fav = item_id in favorites
         oldest = min(lp.get("low_time") or 0, lp.get("high_time") or 0)
         age_min = (now - oldest) / 60
-        if age_min > p.max_age_min:
-            continue
-
         name = it["name"]
         margin = post_tax_margin(buy, sell, name)
         roi = 100 * margin / buy
         vol = vol_1h.get(item_id, 0)
-        if margin < p.min_margin or roi < p.min_roi or vol < p.min_volume:
-            continue
-        if p.budget is not None and buy > p.budget:
+
+        passes = (
+            (p.members is None or bool(it["members"]) == p.members)
+            and age_min <= p.max_age_min
+            and margin >= p.min_margin
+            and roi >= p.min_roi
+            and vol >= p.min_volume
+            and (p.budget is None or buy <= p.budget)
+        )
+        if not passes and not fav:
             continue
 
         limit = it["buy_limit"]
@@ -94,7 +107,10 @@ def screen(
         if p.budget is not None:
             qty = min(qty, p.budget // buy)
 
+        qty = max(qty, 0)
+
         hist = [post_tax_margin(lo, hi, name) for hi, lo in history.get(item_id, [])]
+        median_margin = int(statistics.median(hist)) if hist else None
         out.append(
             Flip(
                 id=item_id,
@@ -109,22 +125,28 @@ def screen(
                 vol_1h=vol,
                 qty=qty,
                 profit=margin * qty,
+                real_profit=None if median_margin is None else max(median_margin, 0) * qty,
                 stability=round(sum(m > 0 for m in hist) / len(hist), 2) if hist else None,
-                median_margin=int(statistics.median(hist)) if hist else None,
+                median_margin=median_margin,
                 windows=len(hist),
                 age_min=round(age_min, 1),
+                favorite=fav,
             )
         )
 
     key = {
+        "real_profit": lambda f: (f.real_profit or 0, f.profit),
         "profit": lambda f: f.profit,
         "margin": lambda f: f.margin,
         "roi": lambda f: f.roi,
         "volume": lambda f: f.vol_1h,
-        "stability": lambda f: (f.stability or 0, f.profit),
-    }.get(p.sort, lambda f: f.profit)
+        "stability": lambda f: (f.stability or 0, f.real_profit or 0),
+    }.get(p.sort, lambda f: (f.real_profit or 0, f.profit))
     out.sort(key=key, reverse=True)
-    return out[: p.limit]
+    # Favorites first (in sort order), and they don't count against the limit.
+    favs = [f for f in out if f.favorite]
+    rest = [f for f in out if not f.favorite]
+    return favs + rest[: p.limit]
 
 
 def hourly_volume(rows, now: float, lookback: int = 3600) -> dict[int, int]:
@@ -177,4 +199,4 @@ def run(p: ScreenParams, now: float | None = None) -> list[dict]:
             (int(now) - p.history_hours * 3600,),
         ):
             history.setdefault(r[0], []).append((r[1], r[2]))
-    return [asdict(f) for f in screen(items, latest, vol_1h, history, p, now)]
+    return [asdict(f) for f in screen(items, latest, vol_1h, history, p, now, p.favorites)]

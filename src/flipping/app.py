@@ -63,8 +63,9 @@ async def flips(
     max_age_min: int = 30,
     members: Literal["all", "members", "f2p"] = "all",
     history_hours: int = Query(6, ge=1, le=72),
-    sort: Literal["profit", "margin", "roi", "volume", "stability"] = "profit",
+    sort: Literal["real_profit", "profit", "margin", "roi", "volume", "stability"] = "real_profit",
     limit: int = Query(100, ge=1, le=1000),
+    favorites: str = Query("", description="Comma-separated item ids (kept in the browser)"),
 ):
     p = screener.ScreenParams(
         budget=budget,
@@ -76,6 +77,7 @@ async def flips(
         history_hours=history_hours,
         sort=sort,
         limit=limit,
+        favorites=frozenset(int(x) for x in favorites.split(",") if x.strip().isdigit()),
     )
     return await asyncio.to_thread(screener.run, p)
 

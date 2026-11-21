@@ -23,7 +23,7 @@ docker compose up --build    # try the image locally (needs Docker reachable fro
 | `src/flipping/wiki.py` | API client. Bulk endpoints only. |
 | `src/flipping/collector.py` | Background loops; `plan_backfill()` decides which windows to fetch after downtime |
 | `src/flipping/db.py` | SQLite schema and queries. One short-lived connection per call; call via `asyncio.to_thread`. |
-| `src/flipping/screener.py` | Pure `screen()` and `hourly_volume()` functions plus the DB-loading `run()` |
+| `src/flipping/screener.py` | Pure `screen()` and `hourly_volume()` functions plus the DB-loading `run()`. Favorites (kept in the browser's localStorage, sent as `?favorites=1,2,3`) skip filters and sort first. |
 | `src/flipping/tax.py` | GE tax rules: 2% rounded down, 5M cap, free under 50gp, an exempt-item list |
 | `src/flipping/static/index.html` | The whole dashboard: vanilla JS, no build step |
 

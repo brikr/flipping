@@ -23,11 +23,14 @@ A single Python process, built on FastAPI and SQLite, does two jobs.
 | Margin | Sell − Tax − Buy |
 | 1h vol | min(units bought, units sold) per hour, measured over the last hour |
 | Qty | min(buy limit, what your budget affords, 1h vol). One hour of real volume is a deliberately conservative guess at how much you can actually fill. |
-| Profit / 4h | Margin × Qty |
+| Profit / 4h | Margin × Qty. Optimistic: assumes the current margin holds. |
 | Stable | Share of price windows in the lookback (default 6h) where the item had a positive post-tax margin |
 | Med. margin | Median post-tax margin across those windows |
+| Real / 4h | Med. margin × Qty, floored at 0. The default sort: steady flips rise and one-off spikes sink. |
 
 **How to read it:** a big margin with low Stable or a negative Med. margin is usually noise, such as a single odd trade. Prefer items with Stable above about 70%. Click a row to see its 24h price chart.
+
+**Favorites (★):** starred items always appear at the top of the table, sorted by the current column, even when the filters would hide them. They're saved in your browser, so each browser or device keeps its own list.
 
 ## Running locally
 

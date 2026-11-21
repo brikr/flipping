@@ -32,13 +32,20 @@
   th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted);
        cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--panel); }
   th.sorted { color: var(--accent); }
-  td:first-child, th:first-child { text-align: left; }
+  .name { text-align: left; }
   td { font-variant-numeric: tabular-nums; }
   tbody tr.item { cursor: pointer; }
   tbody tr.item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   a { color: inherit; }
   .good { color: var(--good); } .bad { color: var(--bad); } .muted { color: var(--muted); }
   .mem { font-size: 10px; color: var(--muted); margin-left: 4px; }
+  th.star, td.star { width: 1%; padding-right: 0; padding-left: 8px; text-align: center; }
+  th.star { cursor: default; }
+  button.fav { background: none; border: none; padding: 0 2px; font-size: 16px; line-height: 1;
+               color: var(--muted); opacity: .45; font-weight: normal; }
+  button.fav:hover { opacity: 1; }
+  button.fav.on { color: var(--accent); opacity: 1; }
+  tr.is-fav { background: color-mix(in srgb, var(--accent) 6%, transparent); }
   tr.detail td { text-align: left; background: var(--bg); }
   .chart { width: 100%; height: 160px; }
   .legend { font-size: 12px; color: var(--muted); }
@@ -70,16 +77,18 @@
 <div class="wrap">
   <table>
     <thead><tr>
-      <th data-k="name">Item</th>
+      <th class="star" title="Favorites always show, ignore filters, and sort above everything else">★</th>
+      <th class="name" data-k="name">Item</th>
       <th data-k="buy">Buy</th>
       <th data-k="sell">Sell</th>
       <th data-k="tax">Tax</th>
       <th data-k="margin">Margin</th>
       <th data-k="roi">ROI</th>
       <th data-k="buy_limit">Limit</th>
-      <th data-k="vol_1h">1h vol</th>
-      <th data-k="qty">Qty</th>
-      <th data-k="profit">Profit / 4h</th>
+      <th data-k="vol_1h" title="Units per hour that actually traded on both sides: min(bought, sold) over the last hour">1h vol</th>
+      <th data-k="qty" title="How many you could realistically buy in one 4h limit window: min(buy limit, what your budget affords, 1h vol)">Qty</th>
+      <th data-k="profit" title="Margin × Qty: assumes today's margin holds (optimistic)">Profit / 4h</th>
+      <th data-k="real_profit" title="Med. margin × Qty: uses the typical recent margin instead of the current one. Traps with a negative median show 0.">Real / 4h</th>
       <th data-k="stability" title="Share of recent price windows with a positive post-tax margin">Stable</th>
       <th data-k="median_margin">Med. margin</th>
       <th data-k="age_min">Age</th>
@@ -114,8 +123,13 @@ const ago = (t) => {
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const STORE = "flipping.filters";
+const FAV_STORE = "flipping.favorites";
+const favorites = new Set();
 const open = new Set();
-let rows = [], sortKey = "profit", sortDir = -1;
+const COLS = 15;
+// UI sort keys the server also understands, so its top-N cut matches the table.
+const SERVER_SORT = { real_profit: "real_profit", profit: "profit", margin: "margin", roi: "roi", vol_1h: "volume", stability: "stability" };
+let rows = [], sortKey = "real_profit", sortDir = -1;
 
 function loadFilters() {
   try {
@@ -126,6 +140,12 @@ function loadFilters() {
     }
     if (saved._sortKey) { sortKey = saved._sortKey; sortDir = saved._sortDir || -1; }
   } catch {}
+}
+function loadFavorites() {
+  try { JSON.parse(localStorage.getItem(FAV_STORE) || "[]").forEach((id) => favorites.add(Number(id))); } catch {}
+}
+function saveFavorites() {
+  try { localStorage.setItem(FAV_STORE, JSON.stringify([...favorites])); } catch {}
 }
 function saveFilters() {
   try {
@@ -140,7 +160,9 @@ async function load() {
     min_volume: f.min_volume || 0, min_roi: f.min_roi || 0,
     min_margin: parseGp(f.min_margin) ?? 1, max_age_min: f.max_age_min || 30,
     members: f.members, history_hours: f.history_hours, limit: 300,
+    sort: SERVER_SORT[sortKey] || "real_profit",
   });
+  if (favorites.size) q.set("favorites", [...favorites].join(","));
   const budget = parseGp(f.budget);
   if (budget) q.set("budget", budget);
   saveFilters();
@@ -169,18 +191,20 @@ function renderStatus(s) {
 
 function render() {
   const sorted = [...rows].sort((a, b) => {
+    if (a.favorite !== b.favorite) return a.favorite ? -1 : 1;  // favorites always on top
     const x = a[sortKey], y = b[sortKey];
     if (typeof x === "string") return sortDir * x.localeCompare(y);
     return sortDir * ((x ?? -Infinity) - (y ?? -Infinity));
   });
   document.querySelectorAll("th").forEach((th) => th.classList.toggle("sorted", th.dataset.k === sortKey));
   if (!sorted.length) {
-    $("#rows").innerHTML = `<tr><td colspan="13" class="empty">No items match. Loosen the filters, or wait for the collector to gather an hour of volume data.</td></tr>`;
+    $("#rows").innerHTML = `<tr><td colspan="${COLS}" class="empty">No items match. Loosen the filters, or wait for the collector to gather an hour of volume data.</td></tr>`;
     return;
   }
   $("#rows").innerHTML = sorted.map((r) => `
-    <tr class="item" data-id="${r.id}">
-      <td><a href="https://prices.runescape.wiki/osrs/item/${r.id}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.name)}</a>${r.members ? '<span class="mem">P2P</span>' : ""}</td>
+    <tr class="item${r.favorite ? " is-fav" : ""}" data-id="${r.id}">
+      <td class="star"><button class="fav${r.favorite ? " on" : ""}" data-fav="${r.id}" title="${r.favorite ? "Unfavorite" : "Favorite"}">${r.favorite ? "★" : "☆"}</button></td>
+      <td class="name"><a href="https://prices.runescape.wiki/osrs/item/${r.id}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(r.name)}</a>${r.members ? '<span class="mem">P2P</span>' : ""}</td>
       <td>${fmt(r.buy)}</td>
       <td>${fmt(r.sell)}</td>
       <td class="muted">${fmt(r.tax)}</td>
@@ -189,7 +213,8 @@ function render() {
       <td>${fmt(r.buy_limit)}</td>
       <td>${fmt(r.vol_1h)}</td>
       <td>${fmt(r.qty)}</td>
-      <td><b>${short(r.profit)}</b></td>
+      <td class="muted">${short(r.profit)}</td>
+      <td><b>${short(r.real_profit)}</b></td>
       <td class="${r.stability == null ? "muted" : r.stability >= 0.7 ? "good" : r.stability < 0.4 ? "bad" : ""}" title="${r.windows} windows">${r.stability == null ? "–" : Math.round(r.stability * 100) + "%"}</td>
       <td class="${(r.median_margin ?? 0) > 0 ? "" : "bad"}">${fmt(r.median_margin)}</td>
       <td class="muted">${r.age_min}m</td>
@@ -207,7 +232,7 @@ function toggleDetail(tr) {
 async function showDetail(tr) {
   const d = document.createElement("tr");
   d.className = "detail";
-  d.innerHTML = `<td colspan="13">loading 24h history…</td>`;
+  d.innerHTML = `<td colspan="${COLS}">loading 24h history…</td>`;
   tr.after(d);
   const hist = await fetch(`api/items/${tr.dataset.id}/history?hours=24`).then((r) => r.json());
   d.firstElementChild.innerHTML = chart(hist);
@@ -230,20 +255,36 @@ function chart(h) {
     </svg>`;
 }
 
-document.querySelectorAll("th").forEach((th) => th.addEventListener("click", () => {
+document.querySelectorAll("th[data-k]").forEach((th) => th.addEventListener("click", () => {
   const k = th.dataset.k;
   sortDir = k === sortKey ? -sortDir : (k === "name" ? 1 : -1);
   sortKey = k;
   saveFilters();
   render();
+  if (SERVER_SORT[k]) load();  // refetch so the server's top-300 matches the new sort
 }));
+// Favorites live in this browser's localStorage. They're sent with each
+// request so the server can keep them past the filters and the row limit.
+function toggleFavorite(id) {
+  id = Number(id);
+  const on = !favorites.has(id);
+  on ? favorites.add(id) : favorites.delete(id);
+  saveFavorites();
+  const r = rows.find((x) => x.id === id);
+  if (r) r.favorite = on;
+  render();
+}
+
 $("#rows").addEventListener("click", (e) => {
+  const fav = e.target.closest("button.fav");
+  if (fav) { e.stopPropagation(); toggleFavorite(fav.dataset.fav); return; }
   const tr = e.target.closest("tr.item");
   if (tr) toggleDetail(tr);
 });
 $("#filters").addEventListener("submit", (e) => { e.preventDefault(); load(); });
 
 loadFilters();
+loadFavorites();
 load();
 setInterval(load, 60_000);
 </script>
