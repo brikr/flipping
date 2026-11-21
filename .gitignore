@@ -3,6 +3,5 @@ __pycache__/
 .venv/
 data/
 .env
-.deploy.env
 .pytest_cache/
 CLAUDE.local.md

@@ -4,7 +4,7 @@ A self-hosted Old School RuneScape Grand Exchange flip screener. A single Python
 - a **collector** that mirrors the [OSRS Wiki real-time prices API](https://oldschool.runescape.wiki/w/RuneScape:Real-time_Prices) into SQLite;
 - a **FastAPI** app that serves a dashboard and a JSON API.
 
-It's deployed as one Docker container on a Synology NAS. See `README.md` for user-facing docs and the deploy setup.
+It's deployed as one Docker container on a Synology NAS. See `README.md` for user-facing docs and `docs/synology.md` for the NAS deploy.
 
 ## Commands
 
@@ -12,7 +12,7 @@ It's deployed as one Docker container on a Synology NAS. See `README.md` for use
 uv sync                      # install deps (Python 3.13, pinned in .python-version)
 uv run pytest -q             # tests; they never touch the network
 uv run flipping              # dev server on http://127.0.0.1:8000, DB at data/flipping.db
-./scripts/deploy.sh          # build + restart on the NAS over SSH (the user runs this; don't deploy unprompted)
+docker compose up --build    # try the image locally (needs Docker reachable from WSL)
 ```
 
 ## Layout
@@ -38,7 +38,7 @@ The wiki provides this API for free. Keep the number of real requests as low as 
   cp data/flipping.db /tmp/<scratch>/test.db
   FLIPPING_DB=/tmp/<scratch>/test.db FLIPPING_PORT=8765 uv run flipping
   ```
-  This matters most for **schema and migration changes**: run them against a copy of a real DB, never by deleting the DB and starting over. If `data/flipping.db` doesn't exist, ask the user before creating one. They can pull the NAS copy with `DOCKER_HOST=ssh://<nas> docker cp flipping:/data/flipping.db data/flipping.db`.
+  This matters most for **schema and migration changes**: run them against a copy of a real DB, never by deleting the DB and starting over. If `data/flipping.db` doesn't exist, ask the user before creating one. They can copy it from the NAS share at `docker/flipping/data/`. Copy `flipping.db-wal` too if it exists.
 - **Turn off the collector when you don't need it.** UI, screener and query work only needs stored data. `FLIPPING_COLLECTOR=0` makes zero API requests.
 - **Keep hourly backfill locally.** Leave `FLIPPING_BACKFILL_STEP=1h`, the default outside Docker. Lower `FLIPPING_BACKFILL_HOURS` if a test only needs a little history. Only the NAS should use `5m`.
 - **Unit tests use fixtures, never the network.** Logic that needs testing should be a pure function, like `screen()`, `plan_backfill()` and `hourly_volume()`, so it can be tested with hand-built data.
@@ -48,10 +48,15 @@ The wiki provides this API for free. Keep the number of real requests as low as 
 
 ## Conventions and gotchas
 
-- **The NAS database is long-lived** and lives on a Docker volume. Schema changes must work on an existing DB: `CREATE ... IF NOT EXISTS` for new tables, and explicit migration code for changes to existing ones. Never assume a fresh DB.
+- **The NAS database is long-lived.** It's bind-mounted from `docker/flipping/data/` on the NAS. Schema changes must work on an existing DB: `CREATE ... IF NOT EXISTS` for new tables, and explicit migration code for changes to existing ones. Never assume a fresh DB.
 - **Prices:** `latest.low` is the instasell price, which is where a flipper buys. `latest.high` is the instabuy price, where a flipper sells. Margin always means after tax: use `tax.post_tax_margin()`, never `high - low`.
 - **Tax rules change occasionally.** Check the OSRS Wiki's Grand Exchange page before changing `tax.py`.
 - **Deploys:**
-  - The NAS builds the image from this folder over SSH, so anything left out by `.dockerignore` won't reach it.
-  - Keep `compose.yaml` on a named volume. A relative bind mount would resolve to a local-machine path on the NAS.
+  - Pushing to `main` runs `.github/workflows/image.yml`: tests first, then a multi-arch build pushed to `ghcr.io/brikr/flipping:latest` and `:sha-<short>`.
+  - The user updates the Synology by hand in Container Manager (Project → Stop → Build).
+  - Never push or deploy on the user's behalf. Pushing to `main` is a deploy trigger, and the user handles git (see CLAUDE.local.md).
+  - The NAS runs `deploy/synology/compose.yaml`, pasted into Container Manager. The root `compose.yaml` is only for local image testing.
+  - When you add or change an env var the NAS should set, update `deploy/synology/compose.yaml` and tell the user to update the project's YAML in Container Manager, since the pasted copy won't change by itself.
+  - Anything listed in `.dockerignore` stays out of the image.
+- **The NAS database must survive new images.** Every new image starts against the existing `data/` folder, so a startup crash from a bad migration means downtime until a fixed image is pushed. Test migrations against a copied real DB.
 - **Docker may not be reachable from WSL.** It depends on Docker Desktop's WSL integration. If you can't run `docker build`, tell the user it was unverified rather than skipping that silently.

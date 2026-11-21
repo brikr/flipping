@@ -1,0 +1,17 @@
+# Paste this into Container Manager -> Project -> Create (see docs/synology.md).
+# Container Manager runs it from the project folder you pick, e.g.
+# /volume1/docker/flipping, so ./data lands there and Hyper Backup can cover it.
+services:
+  flipping:
+    image: ghcr.io/brikr/flipping:latest   # change "brikr" if your GitHub user/org differs
+    container_name: flipping
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # FLIPPING_USER_AGENT: "flipping (self-hosted) - contact: <you>"
+      FLIPPING_BACKFILL_STEP: 5m        # full-resolution gap filling on the NAS
+      FLIPPING_BACKFILL_HOURS: 24
+      FLIPPING_RETENTION_DAYS: 30
+    volumes:
+      - ./data:/data

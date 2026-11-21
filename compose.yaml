@@ -1,20 +1,14 @@
+# For trying the image locally (docker compose up --build). The NAS doesn't use
+# this file; it pulls the CI-built image via deploy/synology/compose.yaml.
 services:
   flipping:
     build: .
-    image: flipping:latest
-    container_name: flipping
-    restart: unless-stopped
+    image: flipping:dev
     ports:
-      - "${FLIPPING_PUBLISH_PORT:-8000}:8000"
+      - "8000:8000"
     environment:
-      FLIPPING_USER_AGENT: ${FLIPPING_USER_AGENT:-osrs-flipping-dashboard (personal, self-hosted)}
-      FLIPPING_RETENTION_DAYS: ${FLIPPING_RETENTION_DAYS:-30}
-      FLIPPING_BACKFILL_HOURS: ${FLIPPING_BACKFILL_HOURS:-24}
-      # Full-resolution gap filling on the NAS (local dev defaults to gentler "1h").
-      FLIPPING_BACKFILL_STEP: ${FLIPPING_BACKFILL_STEP:-5m}
+      FLIPPING_BACKFILL_STEP: 1h
     volumes:
-      # Named volume (not ./data) so it works when deploying to a remote Docker
-      # host: a relative bind path would resolve to *your laptop's* path on the NAS.
       - flipping-data:/data
 
 volumes:
