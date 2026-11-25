@@ -1,4 +1,4 @@
-from flipping.tax import ge_tax, post_tax_margin
+from flipping.tax import conversion_fee, ge_tax, post_tax_margin
 
 
 def test_two_percent_rounded_down():
@@ -22,3 +22,15 @@ def test_exempt_items():
 
 def test_post_tax_margin():
     assert post_tax_margin(buy=100, sell=110) == 110 - 2 - 100
+
+
+def test_bond_conversion_fee():
+    # Wiki example: guide price 10,588,866 -> fee 1,058,887.
+    assert conversion_fee(10_588_866, "Old school bond") == 1_058_887
+    assert conversion_fee(10_588_866, "Abyssal whip") == 0
+
+
+def test_bond_margin_includes_conversion_fee_but_no_tax():
+    assert post_tax_margin(buy=10_000_000, sell=10_500_000, item_name="Old school bond") == (
+        10_500_000 - 1_050_000 - 10_000_000
+    )

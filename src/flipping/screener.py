@@ -3,7 +3,7 @@
 For each item:
   buy     = latest instasell price ("low")  -> where a patient buy offer fills
   sell    = latest instabuy price ("high")  -> where a patient sell offer fills
-  margin  = sell - GE tax - buy
+  margin  = sell - GE tax - buy (bonds also pay a 10% conversion fee; see tax.py)
   vol_1h  = min(units bought, units sold) per hour, measured over the last
             hour of stored windows (see hourly_volume)
   qty     = min(buy limit, what the budget affords, vol_1h)
@@ -29,7 +29,7 @@ import time
 from dataclasses import asdict, dataclass
 
 from . import db
-from .tax import ge_tax, post_tax_margin
+from .tax import flip_fees, post_tax_margin
 
 
 @dataclass
@@ -53,7 +53,7 @@ class Flip:
     members: bool
     buy: int
     sell: int
-    tax: int
+    tax: int  # GE tax plus any bond conversion fee
     margin: int
     roi: float
     buy_limit: int | None
@@ -118,7 +118,7 @@ def screen(
                 members=bool(it["members"]),
                 buy=buy,
                 sell=sell,
-                tax=ge_tax(sell, name),
+                tax=flip_fees(sell, name),
                 margin=margin,
                 roi=round(roi, 2),
                 buy_limit=limit,
