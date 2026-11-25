@@ -4,6 +4,7 @@
 services:
   flipping:
     image: ghcr.io/brikr/flipping:latest   # change "brikr" if your GitHub user/org differs
+    pull_policy: always   # make Project -> Build re-pull :latest instead of reusing the cached image
     container_name: flipping
     restart: unless-stopped
     ports:

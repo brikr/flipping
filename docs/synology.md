@@ -36,7 +36,9 @@ How it fits together:
 ## Updating
 
 1. Push your changes to `main` and wait for the image workflow to finish, about 3–5 minutes.
-2. In Container Manager → Project → `flipping`, choose **Action → Stop**, then **Action → Build**. Build pulls the new `:latest` image and recreates the container. Then choose **Action → Start** if it didn't start by itself.
+2. In Container Manager → Project → `flipping`, choose **Action → Stop**, then **Action → Build**. The compose file sets `pull_policy: always`, so Build pulls the new `:latest` image and recreates the container. Then choose **Action → Start** if it didn't start by itself.
+
+   Without `pull_policy: always`, Build reuses whatever `:latest` is already on the NAS and nothing changes. If that happens, stop the project, delete the `ghcr.io/brikr/flipping` image under Container Manager → Image, and build again.
 
 Container Manager can also show **Update available** on the Image page, but its check can take up to 12 hours, so Project → Build is the reliable route.
 
